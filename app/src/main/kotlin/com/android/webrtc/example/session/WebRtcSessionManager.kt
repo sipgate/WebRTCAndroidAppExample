@@ -1,11 +1,10 @@
 package com.android.webrtc.example.session
 
 import android.content.Context
+import com.android.webrtc.example.audio.AppRTCAudioManager
 import com.android.webrtc.example.ioc.ServiceLocator.eglBaseContext
 import com.android.webrtc.example.signaling.SignalingClient
 import com.android.webrtc.example.signaling.SignalingCommand
-import java.util.UUID
-import java.util.concurrent.Executors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -13,6 +12,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import org.webrtc.AudioTrack
 import org.webrtc.Camera2Enumerator
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
@@ -22,6 +22,8 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoTrack
+import java.util.UUID
+import java.util.concurrent.Executors
 
 private const val VIDEO_WIDTH = 320
 private const val VIDEO_HEIGHT = 240
@@ -45,6 +47,14 @@ class WebRtcSessionManager(
     private val _remoteVideoSinkFlow = MutableSharedFlow<VideoTrack>()
     val remoteVideoSinkFlow: SharedFlow<VideoTrack> = _remoteVideoSinkFlow
 
+    // used to send local audio track to the fragment
+    private val _localAudioSinkFlow = MutableSharedFlow<AudioTrack>()
+    val localAudioSinkFlow: SharedFlow<AudioTrack> = _localAudioSinkFlow
+
+    // used to send local audio track to the sender
+    private val _remoteAudioSinkFlow = MutableSharedFlow<AudioTrack>()
+    val remoteAudioTrack: SharedFlow<AudioTrack> = _remoteAudioSinkFlow
+
     // declaring video constraints and setting OfferToReceiveVideo to true
     // this step is mandatory to create valid offer and answer
     private val mediaConstraints = MediaConstraints().apply {
@@ -53,10 +63,18 @@ class WebRtcSessionManager(
                 "OfferToReceiveVideo", "true"
             )
         )
+        mandatory.add(
+            MediaConstraints.KeyValuePair(
+                "OfferToReceiveAudio", "true"
+            )
+        )
     }
 
     // getting front camera
     private val videoCapturer = getFrontCameraCapturer()
+
+    // getting audio
+    private val audioManager = getAudioManager()
 
     // we need it to initialize video capturer
     private val surfaceTextureHelper = SurfaceTextureHelper.create(
@@ -75,6 +93,43 @@ class WebRtcSessionManager(
         peerConnectionFactory.createVideoTrack(
             "Video${UUID.randomUUID()}",
             videoSource
+        )
+    }
+
+    private val audioSource by lazy {
+        val constraints = MediaConstraints().apply {
+            mandatory.add(
+                MediaConstraints.KeyValuePair(
+                    "OfferToReceiveAudio", "true"
+                )
+            )
+            mandatory.add(
+                MediaConstraints.KeyValuePair(
+                    "OfferToReceiveVideo", "true"
+                )
+            )
+            mandatory.add(
+                MediaConstraints.KeyValuePair(
+                    "DtlsSrtpKeyAgreement", "true"
+                )
+            )
+        }
+        peerConnectionFactory.createAudioSource(constraints).apply {
+            audioManager.start(object : AppRTCAudioManager.AudioManagerEvents {
+                override fun onAudioDeviceChanged(
+                    selectedAudioDevice: AppRTCAudioManager.AudioDevice?,
+                    availableAudioDevices: Set<AppRTCAudioManager.AudioDevice?>?
+                ) {
+                    System.out.println("Ich hab keine Ahnung aber hier kann man mal loggen")
+                }
+            })
+        }
+    }
+
+    private val localAudioTrack: AudioTrack by lazy {
+        peerConnectionFactory.createAudioTrack(
+            "Audio${UUID.randomUUID()}",
+            audioSource
         )
     }
 
@@ -101,9 +156,12 @@ class WebRtcSessionManager(
     fun onSessionScreenReady() {
         peerConnectionExecutor.execute {
             peerConnection.addTrack(localVideoTrack)
+            peerConnection.addTrack(localAudioTrack)
+
             sessionManagerScope.launch {
                 // sending local video track to show local video from start
                 _localVideoSinkFlow.emit(localVideoTrack)
+                _localAudioSinkFlow.emit(localAudioTrack)
             }
 
             if (offer != null) {
@@ -125,7 +183,8 @@ class WebRtcSessionManager(
                                     SignalingCommand.OFFER, offer.description
                                 )
                             }
-                        ), offer
+                        ),
+                        offer
                     )
                 }
             ),
@@ -153,7 +212,8 @@ class WebRtcSessionManager(
                         answer
                     )
                 }
-            ), mediaConstraints
+            ),
+            mediaConstraints
         )
     }
 
@@ -174,7 +234,7 @@ class WebRtcSessionManager(
                 addIceCandidate(
                     IceCandidate(
                         iceArray[0], // sdpMid
-                        iceArray[1].toInt(), //sdpMLineIndex
+                        iceArray[1].toInt(), // sdpMLineIndex
                         iceArray[2] // sdp
                     )
                 )
@@ -213,5 +273,10 @@ class WebRtcSessionManager(
             }
         }
         error("Front camera does not exists")
+    }
+
+    // getting audio
+    private fun getAudioManager(): AppRTCAudioManager {
+        return AppRTCAudioManager.create(context)
     }
 }

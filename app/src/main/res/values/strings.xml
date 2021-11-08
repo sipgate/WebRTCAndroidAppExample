@@ -15,4 +15,12 @@
     <string name="button_join_session">Join session</string>
 
     <string name="button_end_session">End Session</string>
+
+    <!-- Copy from chromium googlesource.com -->
+
+    <string name="pref_speakerphone_key">speakerphone_preference</string>
+    <string name="pref_speakerphone_title">Speakerphone.</string>
+    <string name="pref_speakerphone_dlg">Speakerphone.</string>
+    <string name="pref_speakerphone_default">auto</string>
+
 </resources>
